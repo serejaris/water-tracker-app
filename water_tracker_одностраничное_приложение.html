@@ -1,0 +1,416 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Water Tracker</title>
+  <meta name="description" content="Простое приложение для учёта воды за сутки. Локальное хранение, история, экспорт/импорт."/>
+  <style>
+    :root {
+      --bg: #f6f7fb;
+      --panel: #ffffff;
+      --muted: #64748b;
+      --text: #0f172a;
+      --accent: #2563eb;
+      --accent-2: #14b8a6;
+      --danger: #ef4444;
+      --ok: #16a34a;
+      --radius: 18px;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0; font-family: ui-sans-serif, -apple-system, system-ui, Segoe UI, Roboto, Inter, Arial, "Helvetica Neue", sans-serif;
+      background:
+        radial-gradient(1200px 800px at 80% -10%, rgba(37,99,235,0.08), transparent),
+        radial-gradient(900px 700px at -10% 110%, rgba(20,184,166,0.08), transparent), var(--bg);
+      color: var(--text);
+      display: grid; place-items: start center; padding: 24px; gap: 20px;
+    }
+    .app {
+      width: min(820px, 100%);
+      background: var(--panel);
+      border: 1px solid #e5e7eb;
+      border-radius: 20px;
+      padding: 24px; box-shadow: 0 10px 40px rgba(2,6,23,0.08);
+    }
+    header { display: flex; flex-wrap: wrap; gap: 12px 16px; align-items: center; justify-content: space-between; }
+    .title { font-weight: 700; font-size: 20px; letter-spacing: .3px; }
+    .subtle { color: var(--muted); font-size: 13px; }
+
+    .goal { display: flex; align-items: center; gap: 10px; background: #f8fafc; padding: 10px 12px; border-radius: 12px; border: 1px solid #e5e7eb; }
+    .goal input { width: 110px; border: none; background: #ffffff; color: var(--text); padding: 10px 12px; border-radius: 10px; font-weight: 600; outline: none; border: 1px solid #e5e7eb; }
+    .goal button { cursor: pointer; }
+
+    .kpi { display: grid; grid-template-columns: 1fr; gap: 16px; margin-top: 12px; }
+    @media (min-width:720px){ .kpi { grid-template-columns: 1.3fr .7fr; } }
+
+    .panel { background: #ffffff; border: 1px solid #e5e7eb; border-radius: 16px; padding: 16px; }
+
+    .progress {
+      --h: 18px; background: #f1f5f9; border: 1px solid #e5e7eb; height: var(--h); border-radius: 999px; overflow: hidden; position: relative;
+    }
+    .progress .bar {
+      height: 100%; width: 0%;
+      background: linear-gradient(90deg, var(--accent), var(--accent-2));
+      transition: width .3s ease;
+    }
+    .progress .tick { position: absolute; top: -8px; width: 2px; height: calc(var(--h) + 16px); background: #cbd5e1; opacity: .9; }
+    .progress .label { position: absolute; top: -26px; transform: translateX(-50%); font-size: 12px; color: var(--muted); }
+
+    .totals { display: flex; gap: 14px; align-items: baseline; justify-content: space-between; margin: 4px 2px 0; }
+    .totals .big { font-size: 28px; font-weight: 800; letter-spacing: .2px; }
+    .totals .ok { color: var(--ok); }
+
+    .actions { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; }
+    @media (max-width:560px){ .actions { grid-template-columns: repeat(3, 1fr);} }
+    button, .btn {
+      appearance: none; border: 1px solid #e5e7eb; background: #ffffff; color: var(--text); border-radius: 12px; padding: 10px 12px; cursor: pointer; font-weight: 600;
+      transition: transform .02s ease, background .2s ease, border-color .2s ease; user-select: none;
+    }
+    button:hover { background: #f9fafb; }
+    button:active { transform: translateY(1px); }
+
+    .btn-primary { background: linear-gradient(180deg, #eff6ff, #ffffff); border-color: #93c5fd; }
+    .btn-danger { border-color: #fecaca; background: #fff5f5; color: #991b1b; }
+
+    .row { display: flex; gap: 8px; }
+    .grow { flex: 1; }
+    .input { background:#ffffff; border:1px solid #e5e7eb; color:var(--text); padding:10px 12px; border-radius:12px; outline:none; width:100%; }
+
+    .entries { display: grid; gap: 8px; max-height: 260px; overflow: auto; padding-right: 4px; }
+    .entry { display: grid; grid-template-columns: auto 1fr auto auto; gap: 8px; align-items: center; background: #ffffff; border:1px solid #e5e7eb; padding: 10px 12px; border-radius: 12px; }
+    .entry time { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 12px; }
+    .entry .ml { font-weight: 700; letter-spacing: .3px; }
+    .icon-btn { background: transparent; border: none; color: var(--muted); padding: 6px; border-radius: 8px; }
+    .icon-btn:hover { color: #0f172a; background: #f1f5f9; }
+
+    .history { display: grid; gap: 10px; }
+    canvas { width: 100%; height: 160px; display: block; background: #ffffff; border:1px solid #e5e7eb; border-radius: 12px; }
+
+    footer { display: flex; flex-wrap: wrap; gap: 10px; justify-content: space-between; align-items: center; color: var(--muted); margin-top: 10px; }
+    a.link { color: var(--accent-2); text-decoration: none; }
+  </style>
+</head>
+<body>
+  <div class="app" role="application" aria-label="Трекер воды">
+    <header>
+      <div>
+        <div class="title">Трекер воды</div>
+        <div class="subtle">Сегодня: <span id="todayLabel"></span></div>
+      </div>
+      <div class="goal" title="Дневная цель в миллилитрах">
+        <span class="subtle">Цель/сутки</span>
+        <input id="goalInput" type="number" min="500" step="50" value="2500" inputmode="numeric" aria-label="Цель в миллилитрах" />
+        <button id="saveGoal" class="btn btn-primary">Сохранить</button>
+      </div>
+    </header>
+
+    <section class="kpi">
+      <div class="panel">
+        <div class="totals">
+          <div>
+            <div class="subtle">Выпито</div>
+            <div id="totalMl" class="big">0 мл</div>
+          </div>
+          <div>
+            <div class="subtle">Осталось</div>
+            <div id="leftMl" class="big">—</div>
+          </div>
+          <div>
+            <div class="subtle">Прогресс</div>
+            <div id="percent" class="big">0%</div>
+          </div>
+        </div>
+        <div class="progress" aria-label="Прогресс к цели">
+          <div id="progressBar" class="bar"></div>
+          <div id="targetTick" class="tick" style="left:100%"><span class="label">цель</span></div>
+        </div>
+        <div style="margin-top:14px; display:grid; gap:8px;">
+          <div class="actions" aria-label="Быстрые добавления">
+            <button data-ml="150">150 мл</button>
+            <button data-ml="200">200 мл</button>
+            <button data-ml="250">250 мл</button>
+            <button data-ml="300">300 мл</button>
+            <button data-ml="330">330 мл</button>
+            <button data-ml="500">500 мл</button>
+          </div>
+          <div class="row">
+            <input id="customMl" class="input grow" type="number" min="1" step="10" placeholder="Другая порция, мл (напр. 120)" inputmode="numeric" />
+            <button id="addCustom" class="btn btn-primary">Добавить</button>
+            <button id="undo" class="btn">Отменить последнее</button>
+          </div>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="subtle" style="margin-bottom:8px;">Записи за сегодня</div>
+        <div id="entries" class="entries" aria-live="polite"></div>
+      </div>
+    </section>
+
+    <section class="panel history" aria-label="История">
+      <div class="subtle">История (последние 7 дней)</div>
+      <canvas id="chart" width="800" height="160" aria-label="График за последние 7 дней"></canvas>
+      <div class="row" style="justify-content: space-between;">
+        <div class="row" style="gap:10px;">
+          <button id="exportBtn" class="btn">Экспорт JSON</button>
+          <input id="importFile" type="file" accept="application/json" style="display:none" />
+          <button id="importBtn" class="btn">Импорт JSON</button>
+        </div>
+        <button id="clearToday" class="btn btn-danger" title="Удалить все записи за сегодня">Очистить сегодня</button>
+      </div>
+    </section>
+
+    <footer>
+      <span>Данные хранятся локально в вашем браузере.</span>
+      <span><kbd>⌘/Ctrl</kbd> + <kbd>Enter</kbd> — добавить порцию из поля</span>
+    </footer>
+  </div>
+
+  <script>
+    // ====== УТИЛИТЫ ДАТЫ ======
+    const pad = n => String(n).padStart(2, '0');
+    const toLocalISODate = d => {
+      const year = d.getFullYear();
+      const month = pad(d.getMonth() + 1);
+      const day = pad(d.getDate());
+      return `${year}-${month}-${day}`; // локальная дата без TZ
+    };
+
+    // ====== СОСТОЯНИЕ ======
+    const STORAGE_KEY = 'water-tracker.v1';
+    const defaultState = () => ({ goalMl: 2500, entries: [] });
+
+    function loadState(){
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if(!raw) return defaultState();
+        const s = JSON.parse(raw);
+        if(!Array.isArray(s.entries)) s.entries = [];
+        if(typeof s.goalMl !== 'number' || !isFinite(s.goalMl) || s.goalMl < 500) s.goalMl = 2500;
+        return s;
+      } catch(e){
+        console.error('loadState', e); return defaultState();
+      }
+    }
+    function saveState(){
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    }
+
+    let state = loadState();
+
+    // ====== ОПЕРАЦИИ ======
+    function addEntry(amountMl){
+      const ml = Math.max(1, Math.round(Number(amountMl)));
+      const entry = { id: crypto.randomUUID ? crypto.randomUUID() : (Date.now()+"-"+Math.random()), ts: Date.now(), ml };
+      state.entries.push(entry); saveState(); render();
+    }
+    function deleteEntry(id){
+      const idx = state.entries.findIndex(e => e.id === id);
+      if(idx !== -1){ state.entries.splice(idx,1); saveState(); render(); }
+    }
+    function undoLastToday(){
+      const today = toLocalISODate(new Date());
+      for(let i = state.entries.length - 1; i >= 0; i--){
+        const d = new Date(state.entries[i].ts);
+        if(toLocalISODate(d) === today){ state.entries.splice(i,1); saveState(); render(); return; }
+      }
+    }
+    function clearToday(){
+      const today = toLocalISODate(new Date());
+      state.entries = state.entries.filter(e => toLocalISODate(new Date(e.ts)) !== today);
+      saveState(); render();
+    }
+
+    function setGoal(ml){
+      const v = Math.max(500, Math.round(Number(ml)));
+      state.goalMl = v; saveState(); render();
+    }
+
+    function getTotalsForDate(dateISO){
+      let total = 0; const entries = [];
+      for(const e of state.entries){
+        const d = new Date(e.ts);
+        if(toLocalISODate(d) === dateISO){ total += e.ml; entries.push(e); }
+      }
+      return { total, entries };
+    }
+
+    function getDailyTotalsNDays(n){
+      const days = [];
+      const today = new Date();
+      for(let i=n-1; i>=0; i--){
+        const d = new Date(today); d.setDate(today.getDate() - i);
+        const key = toLocalISODate(d);
+        const { total } = getTotalsForDate(key);
+        days.push({ dateISO: key, total });
+      }
+      return days;
+    }
+
+    // ====== РЕНДЕР ======
+    const todayLabel = document.getElementById('todayLabel');
+    const goalInput = document.getElementById('goalInput');
+    const saveGoal = document.getElementById('saveGoal');
+    const totalMlEl = document.getElementById('totalMl');
+    const leftMlEl = document.getElementById('leftMl');
+    const percentEl = document.getElementById('percent');
+    const progressBar = document.getElementById('progressBar');
+    const targetTick = document.getElementById('targetTick');
+    const entriesEl = document.getElementById('entries');
+    const customMl = document.getElementById('customMl');
+    const addCustom = document.getElementById('addCustom');
+    const undoBtn = document.getElementById('undo');
+    const chart = document.getElementById('chart');
+    const exportBtn = document.getElementById('exportBtn');
+    const importBtn = document.getElementById('importBtn');
+    const importFile = document.getElementById('importFile');
+    const clearTodayBtn = document.getElementById('clearToday');
+
+    function render(){
+      const now = new Date();
+      todayLabel.textContent = now.toLocaleDateString('ru-RU', { weekday:'long', day:'2-digit', month:'long' });
+      goalInput.value = state.goalMl;
+
+      const todayISO = toLocalISODate(now);
+      const { total, entries } = getTotalsForDate(todayISO);
+
+      totalMlEl.textContent = total + ' мл';
+      const left = Math.max(0, state.goalMl - total);
+      leftMlEl.textContent = (left === 0 ? 'выполнено' : left + ' мл');
+      if(left === 0){ leftMlEl.classList.add('ok'); } else { leftMlEl.classList.remove('ok'); }
+
+      const pct = Math.min(100, Math.round((total / state.goalMl) * 100));
+      percentEl.textContent = pct + '%';
+      progressBar.style.width = pct + '%';
+      targetTick.style.left = '100%';
+
+      // Записи
+      entriesEl.innerHTML = '';
+      if(entries.length === 0){
+        const empty = document.createElement('div');
+        empty.className = 'subtle'; empty.textContent = 'Записей за сегодня пока нет.'; entriesEl.appendChild(empty);
+      } else {
+        for(const e of entries.sort((a,b)=>a.ts-b.ts)){
+          const row = document.createElement('div'); row.className = 'entry';
+          const t = document.createElement('time'); t.textContent = new Date(e.ts).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit'});
+          const ml = document.createElement('div'); ml.className = 'ml'; ml.textContent = e.ml + ' мл';
+          const edit = document.createElement('button'); edit.className = 'icon-btn'; edit.title = 'Изменить'; edit.innerHTML = '✎';
+          const del = document.createElement('button'); del.className = 'icon-btn'; del.title = 'Удалить'; del.innerHTML = '🗑️';
+          del.addEventListener('click', () => deleteEntry(e.id));
+          edit.addEventListener('click', () => {
+            const v = prompt('Изменить значение (мл):', e.ml);
+            if(v===null) return;
+            const n = Math.max(1, Math.round(Number(v)));
+            e.ml = n; saveState(); render();
+          });
+          row.appendChild(t); row.appendChild(ml); row.appendChild(edit); row.appendChild(del);
+          entriesEl.appendChild(row);
+        }
+      }
+
+      drawChart();
+    }
+
+    // ====== ГРАФИК ======
+    function drawChart(){
+      const ctx = chart.getContext('2d');
+      const dpr = window.devicePixelRatio || 1;
+      // scale for crispness
+      const cssW = chart.clientWidth; const cssH = chart.clientHeight;
+      if(chart.width !== Math.round(cssW * dpr)) chart.width = Math.round(cssW * dpr);
+      if(chart.height !== Math.round(cssH * dpr)) chart.height = Math.round(cssH * dpr);
+      ctx.scale(dpr, dpr);
+      ctx.clearRect(0, 0, cssW, cssH);
+
+      const days = getDailyTotalsNDays(7);
+      const max = Math.max(state.goalMl, ...days.map(d=>d.total), 1000);
+      const padding = 16; const barW = (cssW - padding*2) / (days.length*1.5);
+      const gap = barW/2; const chartH = cssH - padding*2 - 18;
+
+      // grid
+      ctx.strokeStyle = '#e5e7eb'; ctx.lineWidth = 1; ctx.setLineDash([2,4]);
+      for(let i=0;i<=4;i++){
+        const y = padding + i*(chartH/4);
+        ctx.beginPath(); ctx.moveTo(padding, y); ctx.lineTo(cssW - padding, y); ctx.stroke();
+      }
+      ctx.setLineDash([]);
+
+      // goal line
+      const gy = padding + chartH - (state.goalMl / max) * chartH;
+      ctx.strokeStyle = '#94a3b8'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(padding, gy); ctx.lineTo(cssW - padding, gy); ctx.stroke();
+      ctx.fillStyle = '#64748b'; ctx.font = '12px system-ui'; ctx.fillText('цель', cssW - padding - 28, Math.max(gy-6, 12));
+
+      // bars
+      const startX = padding + gap/2;
+      days.forEach((d, idx) => {
+        const h = (d.total / max) * chartH;
+        const x = startX + idx*(barW+gap);
+        const y = padding + chartH - h;
+        // bar bg
+        ctx.fillStyle = '#e2e8f0'; ctx.fillRect(x, padding, barW, chartH);
+        // bar
+        const grad = ctx.createLinearGradient(0, y, 0, y+h);
+        grad.addColorStop(0, '#5b9df9'); grad.addColorStop(1, '#52d1c6');
+        ctx.fillStyle = grad; ctx.fillRect(x, y, barW, h);
+        // label
+        const label = new Date(d.dateISO).toLocaleDateString('ru-RU', { weekday:'short' });
+        ctx.fillStyle = '#64748b'; ctx.font = '12px system-ui'; ctx.textAlign = 'center';
+        ctx.fillText(label, x + barW/2, cssH - 6);
+      });
+    }
+
+    // ====== СВЯЗИ UI ======
+    document.querySelectorAll('.actions button[data-ml]').forEach(btn => {
+      btn.addEventListener('click', () => addEntry(btn.dataset.ml));
+    });
+
+    addCustom.addEventListener('click', () => {
+      const v = Number(customMl.value);
+      if(!v) { customMl.focus(); return; }
+      addEntry(v); customMl.value=''; customMl.focus();
+    });
+
+    customMl.addEventListener('keydown', (e)=>{
+      if((e.metaKey || e.ctrlKey) && e.key === 'Enter'){ addCustom.click(); }
+    });
+
+    undoBtn.addEventListener('click', undoLastToday);
+    clearTodayBtn.addEventListener('click', ()=>{
+      if(confirm('Удалить все записи за сегодня?')) clearToday();
+    });
+
+    saveGoal.addEventListener('click', () => setGoal(goalInput.value));
+
+    // Экспорт/Импорт
+    exportBtn.addEventListener('click', () => {
+      const data = JSON.stringify(state, null, 2);
+      const blob = new Blob([data], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = `water-tracker-${toLocalISODate(new Date())}.json`;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(()=>URL.revokeObjectURL(url), 1000);
+    });
+
+    importBtn.addEventListener('click', () => importFile.click());
+    importFile.addEventListener('change', () => {
+      const file = importFile.files[0]; if(!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        try{
+          const data = JSON.parse(reader.result);
+          if(!Array.isArray(data.entries) || typeof data.goalMl !== 'number') throw new Error('Неверный формат файла');
+          if(!confirm('Заменить текущие данные импортируемыми?')) return;
+          state = data; saveState(); render();
+        }catch(err){ alert('Не удалось импортировать: ' + err.message); }
+      };
+      reader.readAsText(file);
+    });
+
+    // Первичная отрисовка
+    window.addEventListener('resize', drawChart);
+    render();
+  </script>
+</body>
+</html>
